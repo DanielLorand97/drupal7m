@@ -1,0 +1,161 @@
+<?php
+
+function export_product_menu(){
+    $items = array();
+    $items['product/%/json'] =  array(
+        'page callback' => 'export_product_list_to_json',
+        'access arguments' => array('access content'),
+		'page arguments' => array(1),
+    	'type' => MENU_CALLBACK,
+		'menu_name' => 'main-menu',
+    );
+	$items['product/%/xml'] =  array(
+        'page callback' => 'export_product_list_to_xml',
+        'access arguments' => array('access content'),
+		'page arguments' => array(1),
+    	'type' => MENU_CALLBACK,
+		'menu_name' => 'main-menu',
+    );
+	$items['products'] =  array(
+		'title' => 'Products',
+        'page callback' => 'product_list',
+        'access arguments' => array('access content'),
+		'page arguments' => array(1),
+    );
+    return $items;
+}
+function export_product_list_to_xml($id){
+	$query = db_query("SELECT * FROM `node` where nid = $id 
+	ORDER BY `nid` ASC");
+	$qresponse = $query->fetchAll();
+	foreach($qresponse as $qr){}
+	return custom_xml_node($qr->nid,$qr->title);
+}
+
+function product_list(){
+	$header = array('Product ID','Product Title','JSON','XML');
+	$rows = array();
+	$query = db_query("SELECT * FROM `node` WHERE type= 'product' ORDER BY `nid` ASC");
+	$results = $query->fetchAll();
+	  foreach($results as $result){
+	  $rows[] = array(
+		  $result->nid,
+		  $result->title,
+		  '<a href="product/'.$result->nid.'/json">'. $result->title.'.json</a>', 
+		  '<a href="product/'.$result->nid.'/xml">'. $result->title.'.xml</a>', 
+		);
+	 }
+	return theme('table', array('header' => $header, 'rows' => $rows));
+}
+
+function export_product_list_to_json($id){
+	$node = $id;
+	$q = db_query("SELECT * FROM `node` where nid = $node
+    ORDER BY `nid` ASC");
+    $qresponse = $q->fetchAll();
+    foreach($qresponse as $qr)
+    {
+        $result = [
+			"product_id" => $qr->nid,
+			"product_name" => $qr->title,
+		];
+    }
+	$query = db_query("SELECT * FROM `field_revision_block_product` where block_product_target_id = ". $node);
+	$records = $query->fetchAll();
+
+	foreach ($records as $record) {	
+		$query1 = db_query("SELECT nid,title,status, block_nr_value FROM `node` n INNER JOIN `field_revision_block_nr` f ON n.nid = f.entity_id  where `nid` = " . $record->entity_id. " ORDER BY  block_nr_value ASC " );
+		$records1 = $query1->fetchAll(); 
+
+		foreach ($records1 as $record1) {
+		$parts = [
+			'nr' => $record1->block_nr_value,
+			'name'=> $record1->title,
+		];
+		$result['parts'][$record1->block_nr_value] = $parts;
+		$query2 = db_query("SELECT entity_id,block_parts_blockpart_sku_value,block_parts_blockpart_name_value,delta FROM
+		 `field_revision_block_parts` where `entity_id` = " . $record1->nid ." ORDER BY  delta ASC" );
+		$records2 = $query2->fetchAll(); 
+			foreach ($records2 as $record2) {
+				$stock= [
+					'nr' => $record2->delta, 
+					'sku' => $record2->block_parts_blockpart_sku_value,
+					'partname' => $record2->block_parts_blockpart_name_value,
+				];
+				$result['parts'][$record1->block_nr_value][$record2->delta] = $stock;
+			}
+			
+		}			
+
+	}
+	return drupal_json_output($result);
+}
+
+
+
+function custom_xml_node($nids,$title) {
+	$query = db_query("SELECT * FROM `field_revision_block_product` where block_product_target_id = ". $nids);
+	$records = $query->fetchAll();
+  	$nodes = $records;
+  	$items = '';
+  	$items2 = '';
+  	foreach ($nodes as $node) {
+		$query1 = db_query("SELECT nid,title,status, block_nr_value FROM `node` n INNER JOIN `field_revision_block_nr` f ON n.nid = f.entity_id  where `nid` = " . $node->entity_id. " ORDER BY  block_nr_value ASC " );
+		$records1 = $query1->fetchAll(); 
+		foreach($records1 as $record1){
+			$items .= custom_xml_format_item($record1->title, $record1->nid,$record1->block_nr_value);
+			$query2 = db_query("SELECT entity_id,block_parts_blockpart_sku_value,block_parts_blockpart_name_value,delta FROM
+			`field_revision_block_parts` where `entity_id` = " . $record1->nid ." ORDER BY  delta ASC" );
+			$records2 = $query2->fetchAll();
+			foreach($records2 as $record2){
+				$items2 .= custom_xml_format_item2($record2->block_parts_blockpart_sku_value,
+				$record2->block_parts_blockpart_name_value,$record2->delta);
+			} 
+	}
+  }
+  $output = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"no\" ?>\n";
+  
+  $output .= custom_xml_format($items,$items2,$nids,$title);
+
+  drupal_add_http_header('Content-Type', 'application/rss+xml; charset=utf-8');
+  print $output;
+}
+
+/**
+ * Formats an XML channel.
+ */
+function custom_xml_format( $items,$items2,$nids,$title) {
+  $output = "  <products>\n";
+  $output .= "    <product_id=".$nids.">\n";
+  $output .= '   	<product_title>' . $title . "</product_title>\n";
+  $output .= '        <prodcut_nid>' . $nids . "</prodcut_nid>\n";
+  $output .= "	<parts>\n";
+  $output .= $items;
+  $output .= "	</parts>\n";
+  //$output .= 	$items2;
+  $output .= "    </product_id>\n";
+  $output .= "  </products>\n";
+
+  return $output;
+}
+
+function custom_xml_format_item2($sku, $name,$nr) {
+
+	$output = "    <sub_parts>\n";
+	$output .= '      <sku_value>' . check_url($sku) . "</sku_value>\n";
+	$output .= '      <part_name>' . check_url($name) . "</part_name>\n";
+	$output .= '      <nr>' . check_plain($nr) . "</nr>\n";
+	$output .= "    </sub_parts>\n\n";
+  
+	return $output;
+}
+function custom_xml_format_item($title, $link,$nr) {
+
+  $output = "    <part>\n";
+  $output .= '      <part_nr>' . check_url($nr) . "</part_nr>\n";
+  $output .= '      <part_name>' . check_url($title) . "</part_name>\n";
+  $output .= '      <part_id>' . check_plain($link) . "</part_id>\n";
+  $output .= "    </part>\n";
+
+  return $output;
+}
